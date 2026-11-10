@@ -9,6 +9,16 @@ def test_parse_time() -> None:
     assert baostock_source.parse_time("20240102093500000") == datetime(2024, 1, 2, 9, 35)
 
 
+def test_chunk_ranges_are_half_years() -> None:
+    chunks = list(baostock_source.chunk_ranges(date(2024, 3, 1), date(2025, 8, 1)))
+    assert chunks == [
+        (date(2024, 3, 1), date(2024, 6, 30)),
+        (date(2024, 7, 1), date(2024, 12, 31)),
+        (date(2025, 1, 1), date(2025, 6, 30)),
+        (date(2025, 7, 1), date(2025, 8, 1)),
+    ]
+
+
 class FakeResultSet:
     error_code = "0"
     error_msg = "success"

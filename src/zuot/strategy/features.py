@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 
-def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
+def _rsi(close: pd.Series, period: int = 6) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0.0)
     loss = -delta.clip(upper=0.0)

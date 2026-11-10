@@ -159,8 +159,12 @@ def run_backtest(
     end: date,
     strategy: Strategy,
     symbols: list[str] | None = None,
+    frames: dict[str, pd.DataFrame] | None = None,
 ) -> BacktestResult:
-    frames = build_features(db, cfg, start, end)
+    # Research sweeps reuse one enriched frame set across many parameter
+    # variants; building features is by far the expensive part.
+    if frames is None:
+        frames = build_features(db, cfg, start, end)
     selected = symbols or list(cfg.symbols)
     frames = {code: frame for code, frame in frames.items() if code in selected}
     if not frames:
@@ -204,6 +208,7 @@ def run_backtest(
             )
         )
         cumulative = round(cumulative + net, 2)
+        day_pnl = round(day_pnl + net, 2)
         equity.append((buy_time.date(), cumulative))
 
     for day in all_days:
@@ -278,8 +283,6 @@ def run_backtest(
                         open_lot = None
                         if day_pnl <= -cfg.risk.daily_loss_cap:
                             halted = True
-                if open_lot is not None:
-                    day_pnl = sum(trade.net_pnl for trade in trades if trade.date == day)
 
             # 3. Evaluate new signals at this bar's close.
             if open_lot is None and pending is None and not halted and ts.time() <= no_new_sell:

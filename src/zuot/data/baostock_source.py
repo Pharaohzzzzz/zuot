@@ -1,6 +1,6 @@
 """BaoStock 5-minute/daily history.
 
-Long ranges make BaoStock hang, so 5-minute fetch is split by calendar year.
+Long ranges make BaoStock hang, so 5-minute fetch is split by half-year.
 The data is unadjusted by default (adjustflag=3); intraday percentage moves are
 unaffected by a constant adjustment factor within one day.
 """
@@ -11,7 +11,7 @@ import socket
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import baostock as bs
 
@@ -99,14 +99,18 @@ def fetch_5m(code: str, start: date, end: date, adjustflag: str = "3") -> list[B
 
 
 def chunk_ranges(start: date, end: date) -> Iterator[tuple[date, date]]:
-    """Yield quarter-year date ranges covering [start, end]."""
+    """Yield half-year date ranges covering [start, end].
+
+    BaoStock occasionally hangs on a full year (and, for 2025, on Q3 alone);
+    half-year requests stay small enough to return reliably.
+    """
     for year in range(start.year, end.year + 1):
-        for month in (1, 4, 7, 10):
+        for month, chunk_end_date in (
+            (1, date(year, 6, 30)),
+            (7, date(year, 12, 31)),
+        ):
             chunk_start = max(start, date(year, month, 1))
-            if month == 10:
-                chunk_end = min(end, date(year, 12, 31))
-            else:
-                chunk_end = min(end, date(year, month + 3, 1) - timedelta(days=1))
+            chunk_end = min(end, chunk_end_date)
             if chunk_start > chunk_end:
                 continue
             yield chunk_start, chunk_end
@@ -115,11 +119,11 @@ def chunk_ranges(start: date, end: date) -> Iterator[tuple[date, date]]:
 def fetch_5m_chunks(
     code: str, start: date, end: date, adjustflag: str = "3"
 ) -> Iterator[tuple[date, date, list[Bar5m]]]:
-    """Yield 5-minute bars in quarter-year chunks.
+    """Yield 5-minute bars in half-year chunks.
 
     A full calendar year can hang on the BaoStock server for recent years, while
-    the same data split into halves/quarters returns normally. Quarter chunks also
-    let the caller persist progress before the next request.
+    the same data split into halves returns normally. Half-year chunks also let
+    the caller persist progress before the next request.
     """
     for chunk_start, chunk_end in chunk_ranges(start, end):
         yield chunk_start, chunk_end, fetch_5m(

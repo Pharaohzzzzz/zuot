@@ -11,7 +11,7 @@ from typing import Any
 import pandas as pd
 from jinja2 import Template
 
-from ..backtest.engine import BacktestResult, run_backtest
+from ..backtest.engine import BacktestResult, build_features, run_backtest
 from ..config import AppConfig
 from ..db import Database
 from ..strategy.strategies import (
@@ -91,6 +91,7 @@ def _random_benchmark(
     cfg: AppConfig,
     base: Strategy,
     seeds: int = 10,
+    frames: dict[str, pd.DataFrame] | None = None,
 ) -> float:
     start = getattr(base, "entry_start", time(9, 45))
     end = getattr(base, "entry_end", time(14, 0))
@@ -99,7 +100,9 @@ def _random_benchmark(
     values = []
     for seed in range(seeds):
         strategy = RandomEntryStrategy(seed, start, end, target_pct, stop_pct)
-        result = run_backtest(db, cfg, TRAIN_START, TRAIN_END, strategy)
+        result = run_backtest(
+            db, cfg, TRAIN_START, TRAIN_END, strategy, frames=frames
+        )
         if result.metrics["n_trades"]:
             values.append(float(result.metrics["avg_net_pct"]))
     return round(sum(values) / len(values), 6) if values else 0.0
@@ -109,6 +112,7 @@ def _sensitivity(
     db: Database,
     cfg: AppConfig,
     name: str,
+    frames: dict[str, pd.DataFrame] | None = None,
 ) -> list[dict[str, Any]]:
     base_params = _base_params(cfg, name)
     base = build_strategy(name, base_params)
@@ -120,7 +124,9 @@ def _sensitivity(
         for label, factor in (("low", 0.8), ("high", 1.2)):
             params = {**base_params, key: float(base_value) * factor}
             variant = build_strategy(name, params)
-            result = run_backtest(db, cfg, TRAIN_START, TRAIN_END, variant)
+            result = run_backtest(
+                db, cfg, TRAIN_START, TRAIN_END, variant, frames=frames
+            )
             out.append(
                 {
                     "param": key,
@@ -176,24 +182,34 @@ def _run(
     name: str,
     start: date,
     end: date,
+    frames: dict[str, pd.DataFrame] | None = None,
 ) -> BacktestResult:
-    return run_backtest(db, cfg, start, end, build_strategy(name, _base_params(cfg, name)))
+    return run_backtest(
+        db,
+        cfg,
+        start,
+        end,
+        build_strategy(name, _base_params(cfg, name)),
+        frames=frames,
+    )
 
 
 def run_research(db: Database, cfg: AppConfig) -> dict[str, Any]:
     cfg.ensure_dirs()
     reports: list[StrategyReport] = []
+    train_frames = build_features(db, cfg, TRAIN_START, TRAIN_END)
+    oos_frames = build_features(db, cfg, OOS_START, OOS_END)
     for name in CANDIDATES:
-        train_result = _run(db, cfg, name, TRAIN_START, TRAIN_END)
-        oos_result = _run(db, cfg, name, OOS_START, OOS_END)
+        train_result = _run(db, cfg, name, TRAIN_START, TRAIN_END, frames=train_frames)
+        oos_result = _run(db, cfg, name, OOS_START, OOS_END, frames=oos_frames)
         base = build_strategy(name, _base_params(cfg, name))
         params = {
             key: value
             for key, value in vars(base).items()
             if isinstance(value, (int, float, str))
         }
-        random_avg = _random_benchmark(db, cfg, base)
-        sensitivity = _sensitivity(db, cfg, name)
+        random_avg = _random_benchmark(db, cfg, base, frames=train_frames)
+        sensitivity = _sensitivity(db, cfg, name, frames=train_frames)
         gate = _gate(train_result.metrics, oos_result.metrics, random_avg, sensitivity)
         reports.append(
             StrategyReport(
