@@ -98,15 +98,8 @@ def fetch_5m(code: str, start: date, end: date, adjustflag: str = "3") -> list[B
     return bars
 
 
-def fetch_5m_chunks(
-    code: str, start: date, end: date, adjustflag: str = "3"
-) -> Iterator[tuple[date, date, list[Bar5m]]]:
-    """Yield 5-minute bars in quarter-year chunks.
-
-    A full calendar year can hang on the BaoStock server for recent years, while
-    the same data split into halves/quarters returns normally. Quarter chunks also
-    let the caller persist progress before the next request.
-    """
+def chunk_ranges(start: date, end: date) -> Iterator[tuple[date, date]]:
+    """Yield quarter-year date ranges covering [start, end]."""
     for year in range(start.year, end.year + 1):
         for month in (1, 4, 7, 10):
             chunk_start = max(start, date(year, month, 1))
@@ -116,9 +109,22 @@ def fetch_5m_chunks(
                 chunk_end = min(end, date(year, month + 3, 1) - timedelta(days=1))
             if chunk_start > chunk_end:
                 continue
-            yield chunk_start, chunk_end, fetch_5m(
-                code, chunk_start, chunk_end, adjustflag=adjustflag
-            )
+            yield chunk_start, chunk_end
+
+
+def fetch_5m_chunks(
+    code: str, start: date, end: date, adjustflag: str = "3"
+) -> Iterator[tuple[date, date, list[Bar5m]]]:
+    """Yield 5-minute bars in quarter-year chunks.
+
+    A full calendar year can hang on the BaoStock server for recent years, while
+    the same data split into halves/quarters returns normally. Quarter chunks also
+    let the caller persist progress before the next request.
+    """
+    for chunk_start, chunk_end in chunk_ranges(start, end):
+        yield chunk_start, chunk_end, fetch_5m(
+            code, chunk_start, chunk_end, adjustflag=adjustflag
+        )
 
 
 def fetch_5m_range(

@@ -17,10 +17,11 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import load_config
-from .data.baostock_source import fetch_5m_chunks, fetch_daily, session
+from .data.baostock_source import chunk_ranges, fetch_5m, fetch_daily, session
 from .data.realtime import fetch_quotes
 from .data.store import upsert_5m, upsert_daily
 from .db import Database
+from .research.runner import run_research
 
 app = typer.Typer(
     add_completion=False,
@@ -230,26 +231,30 @@ def fetch_cmd(
 
     db = _open_db()
     try:
-        with session():
-            for symbol in cfg.symbols.values():
-                code = f"{symbol.exchange}.{symbol.code}"
-                count_5m = 0
-                for chunk_start, chunk_end, bars in fetch_5m_chunks(
-                    code, start_day, end_day
-                ):
-                    written = upsert_5m(db, bars)
-                    count_5m += written
-                    console.print(
-                        f"{code} {chunk_start.isoformat()}..{chunk_end.isoformat()}: "
-                        f"{written} bars"
-                    )
-                count_daily = 0
-                if daily:
-                    count_daily = upsert_daily(db, fetch_daily(code, start_day, end_day))
+        for symbol in cfg.symbols.values():
+            code = f"{symbol.exchange}.{symbol.code}"
+            count_5m = 0
+            for chunk_start, chunk_end in chunk_ranges(start_day, end_day):
+                # A long-lived BaoStock session starts hanging after roughly 20
+                # queries. Re-login for every quarter so a backfill can finish.
+                with session():
+                    bars = fetch_5m(code, chunk_start, chunk_end)
+                written = upsert_5m(db, bars)
+                count_5m += written
                 console.print(
-                    f"{code}: 5m={count_5m} daily={count_daily} "
-                    f"range={start_day.isoformat()}..{end_day.isoformat()}"
+                    f"{code} {chunk_start.isoformat()}..{chunk_end.isoformat()}: "
+                    f"{written} bars"
                 )
+            count_daily = 0
+            if daily:
+                with session():
+                    count_daily = upsert_daily(
+                        db, fetch_daily(code, start_day, end_day)
+                    )
+            console.print(
+                f"{code}: 5m={count_5m} daily={count_daily} "
+                f"range={start_day.isoformat()}..{end_day.isoformat()}"
+            )
     finally:
         db.close()
 
@@ -257,7 +262,47 @@ def fetch_cmd(
 @app.command("research")
 def research_cmd() -> None:
     """Run the strategy research and Gate evaluation."""
-    _not_implemented("research")
+    cfg = load_config()
+    db = _open_db()
+    try:
+        result = run_research(db, cfg)
+    finally:
+        db.close()
+
+    table = Table(title="research gate")
+    table.add_column("strategy")
+    table.add_column("train n", justify="right")
+    table.add_column("train exp", justify="right")
+    table.add_column("win", justify="right")
+    table.add_column("PF", justify="right")
+    table.add_column("DD", justify="right")
+    table.add_column("OOS n", justify="right")
+    table.add_column("OOS exp", justify="right")
+    table.add_column("gate")
+    for report in result["strategies"]:
+        train = report["train"]
+        oos = report["oos"]
+        gate = "PASS" if report["gate"]["passed"] else "FAIL"
+        style = "green" if report["gate"]["passed"] else "red"
+        table.add_row(
+            report["name"],
+            str(train["n_trades"]),
+            f"{train['avg_net_pct']:+.3%}",
+            f"{train['win_rate']:.1%}",
+            f"{train['profit_factor']:.2f}",
+            f"{train['max_drawdown']:.0f}",
+            str(oos["n_trades"]),
+            f"{oos['avg_net_pct']:+.3%}",
+            f"[{style}]{gate}[/{style}]",
+        )
+    console.print(table)
+    console.print(f"JSON: {result['json_path']}")
+    console.print(f"HTML: {result['html_path']}")
+    if not result["passed"]:
+        console.print(
+            "[yellow]Gate not passed; do not risk real money. "
+            "Use the report to revise or keep monitoring only.[/yellow]"
+        )
 
 
 @app.command("plan")
