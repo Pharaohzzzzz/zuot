@@ -190,11 +190,125 @@ class AfternoonPulseStrategy:
         return EntrySignal(score, reason, self.target_pct, self.stop_pct)
 
 
+class OpenSourceComboStrategy:
+    """S5: 8kms-style suitability score plus a mean-reversion regime veto.
+
+    This is a bounded port of ideas, not a copy of either project:
+    * the 0-100 score, gap/VWAP/position/amount/shadow weights and the 65
+      threshold come from ``8kms/quant-t-system``;
+    * the efficiency-ratio and ATR-slope veto come from
+      ``Ye-Yu-Mo/mean-reversion-t``;
+    * the buyback target is the closest-to-entry of VWAP, MA5, MA20 and an
+      ATR reference, with the 0.27% practical edge as a floor.
+
+    The source projects do not provide an out-of-sample A-share test with our
+    cost/T+1 rules. The point of S5 is to test those ideas under the same Gate
+    as the other candidates, not to trust their published hit rates.
+    """
+
+    name = "open_source_combo"
+
+    def __init__(self, params: dict[str, Any] | None = None) -> None:
+        p = params or {}
+        self.entry_start = _clock(p.get("entry_start", "09:35"))
+        self.entry_end = _clock(p.get("entry_end", "10:30"))
+        self.min_score = float(p.get("min_score", 65.0))
+        self.min_gap = float(p.get("min_gap", 0.006))
+        self.max_gap = float(p.get("max_gap", 0.03))
+        self.min_vwap_distance = float(p.get("min_vwap_distance", 0.003))
+        self.close_position_min = float(p.get("close_position_min", 0.72))
+        self.amount_ratio_min = float(p.get("amount_ratio_min", 0.035))
+        self.ret5_min = float(p.get("ret5_min", 0.05))
+        self.position20_min = float(p.get("position20_min", 0.82))
+        self.upper_shadow_min = float(p.get("upper_shadow_min", 0.35))
+        self.max_er = float(p.get("max_er", 0.80))
+        self.max_abs_slope = float(p.get("max_abs_slope", 0.45))
+        self.min_target_pct = float(p.get("min_target_pct", 0.0027))
+        self.max_target_pct = float(p.get("max_target_pct", 0.02))
+        self.min_stop_pct = float(p.get("min_stop_pct", 0.006))
+        self.max_stop_pct = float(p.get("max_stop_pct", 0.015))
+
+    def evaluate(self, row: pd.Series) -> EntrySignal | None:
+        if not (self.entry_start <= row["time"] <= self.entry_end):
+            return None
+        required = (
+            "gap",
+            "vwap",
+            "close",
+            "preclose",
+            "close_position",
+            "amount_ratio",
+            "upper_shadow",
+            "d_ret5",
+            "d_position20",
+        )
+        if any(pd.isna(row.get(key)) for key in required):
+            return None
+        close = float(row["close"])
+        vwap = float(row["vwap"])
+        if close <= vwap:
+            return None
+
+        gap = float(row["gap"])
+        score = 45.0
+        if self.min_gap <= gap <= self.max_gap:
+            score += min(18.0, gap * 700.0)
+        elif gap > self.max_gap:
+            score += 6.0
+        elif gap < -0.004:
+            score -= 12.0
+
+        vwap_distance = close / vwap - 1.0
+        if vwap_distance > self.min_vwap_distance:
+            score += min(14.0, vwap_distance * 1600.0)
+        if float(row["close_position"]) > self.close_position_min:
+            score += 8.0
+        amount_ratio = float(row["amount_ratio"])
+        if amount_ratio > self.amount_ratio_min:
+            score += min(8.0, amount_ratio * 80.0)
+        if float(row["d_ret5"]) > self.ret5_min:
+            score += 8.0
+        if float(row["d_position20"]) > self.position20_min:
+            score += 7.0
+        if float(row["upper_shadow"]) > self.upper_shadow_min:
+            score += 5.0
+        if bool(row.get("broke_prev_high")) and amount_ratio > 0.04:
+            score -= 8.0
+
+        er16 = float(row.get("er16", 0.0) or 0.0)
+        slope = float(row.get("slope8_atr", 0.0) or 0.0)
+        if er16 >= self.max_er or abs(slope) >= self.max_abs_slope:
+            return None
+        if score < self.min_score:
+            return None
+
+        references = [value for value in (vwap, row.get("d_ma5"), row.get("d_ma20"))
+                      if value is not None and not pd.isna(value) and 0.0 < float(value) < close]
+        atr_pct = float(row["d_atr_pct"]) if not pd.isna(row.get("d_atr_pct")) else 0.0
+        if atr_pct > 0.0:
+            atr_reference = float(row["preclose"]) * (1.0 - atr_pct * 0.4)
+            if 0.0 < atr_reference < close:
+                references.append(atr_reference)
+        target_price = max(references) if references else close * (1.0 - self.min_target_pct)
+        target_pct = (close - target_price) / close
+        target_pct = max(self.min_target_pct, min(self.max_target_pct, target_pct))
+        stop_pct = max(self.min_stop_pct, min(self.max_stop_pct, atr_pct * 0.5))
+
+        reason = (
+            f"score={score:.0f} gap={gap:.1%} vwap_dist={vwap_distance:.2%} "
+            f"close_pos={float(row['close_position']):.2f} "
+            f"amount_ratio={amount_ratio:.3f} ret5={float(row['d_ret5']):.1%} "
+            f"pos20={float(row['d_position20']):.2f} er16={er16:.2f} slope={slope:.2f}"
+        )
+        return EntrySignal(score, reason, target_pct, stop_pct)
+
+
 _STRATEGIES = {
     "gap_fade": GapFadeStrategy,
     "vwap_reversion": VwapReversionStrategy,
     "prior_high_fade": PriorHighFadeStrategy,
     "afternoon_pulse": AfternoonPulseStrategy,
+    "open_source_combo": OpenSourceComboStrategy,
 }
 
 

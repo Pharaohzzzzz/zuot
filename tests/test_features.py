@@ -47,6 +47,23 @@ def test_features_are_causal_and_bounded() -> None:
     assert frame["max_z"].ge(frame["z"]).all()
     assert frame["max_rsi"].ge(frame["rsi"]).all()
     assert frame["gap"].iloc[0] == pytest.approx(frame["open"].iloc[0] / 9.8 - 1.0)
+    for column in (
+        "vwap_distance",
+        "close_position",
+        "amount_ratio",
+        "upper_shadow",
+        "broke_prev_high",
+        "er16",
+        "slope8_atr",
+    ):
+        assert column in frame.columns
+
+
+def test_daily_context_uses_prior_day_only() -> None:
+    frame = add_features(_bars(), _daily())
+    # 2024-01-02 has only one earlier daily close (2024-01-01), so the
+    # five-day return on the first bar is not available yet.
+    assert pd.isna(frame["d_ret5"].iloc[0])
 
 
 def test_features_previous_day_high() -> None:

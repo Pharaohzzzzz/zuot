@@ -25,12 +25,19 @@ TRAIN_END = date(2023, 12, 31)
 OOS_START = date(2024, 1, 1)
 OOS_END = date(2026, 11, 10)
 
-CANDIDATES = ("gap_fade", "vwap_reversion", "prior_high_fade", "afternoon_pulse")
+CANDIDATES = (
+    "gap_fade",
+    "vwap_reversion",
+    "prior_high_fade",
+    "afternoon_pulse",
+    "open_source_combo",
+)
 SENSITIVITY_KEYS = {
     "gap_fade": ("gap_min", "vwap_z", "rsi_min", "target_pct"),
     "vwap_reversion": ("vwap_z", "rsi_min", "volume_ratio_max", "target_pct"),
     "prior_high_fade": ("probe_pct", "fail_pct", "target_pct"),
     "afternoon_pulse": ("min_ret_from_open", "vwap_z", "target_pct"),
+    "open_source_combo": ("min_score", "min_gap", "max_er", "min_target_pct"),
 }
 
 
@@ -95,8 +102,10 @@ def _random_benchmark(
 ) -> float:
     start = getattr(base, "entry_start", time(9, 45))
     end = getattr(base, "entry_end", time(14, 0))
-    target_pct = float(getattr(base, "target_pct", 0.015))
-    stop_pct = float(getattr(base, "stop_pct", 0.015))
+    target_pct = float(
+        getattr(base, "target_pct", getattr(base, "min_target_pct", 0.015))
+    )
+    stop_pct = float(getattr(base, "stop_pct", getattr(base, "min_stop_pct", 0.015)))
     values = []
     for seed in range(seeds):
         strategy = RandomEntryStrategy(seed, start, end, target_pct, stop_pct)
