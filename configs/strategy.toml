@@ -1,0 +1,14 @@
+[strategy]
+name = "gap_fade"
+lock_path = "strategy.lock.json"
+
+[strategy.params]
+entry_start = "09:45"
+entry_end = "10:30"
+gap_min = 0.025
+gap_max = 0.07
+vwap_z = 1.0
+volume_ratio_max = 1.2
+rsi_min = 65.0
+target_pct = 0.015
+stop_pct = 0.015

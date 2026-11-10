@@ -1,0 +1,6 @@
+[costs]
+commission_rate = 0.000085
+min_commission = 5.0
+stamp_sell_rate = 0.0005
+transfer_rate = 0.00001
+slippage_ticks = 1

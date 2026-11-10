@@ -1,0 +1,19 @@
+[risk]
+daily_loss_cap = 2000.0
+max_open_t = 1
+max_round_trips_per_symbol_per_day = 1
+no_new_sell_after = "14:00"
+force_buyback = "14:50"
+limit_buffer_pct = 0.02
+min_gap_pct = -0.03
+max_gap_pct = 0.07
+min_atr_pct = 0.035
+max_atr_pct = 0.18
+
+[risk.stop_pct]
+300308 = 0.015
+300476 = 0.014
+
+[risk.target_pct]
+300308 = [0.015, 0.025]
+300476 = [0.014, 0.025]

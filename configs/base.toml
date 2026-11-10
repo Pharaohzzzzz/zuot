@@ -1,0 +1,6 @@
+[app]
+timezone = "Asia/Shanghai"
+data_dir = "data"
+log_dir = "logs"
+report_dir = "reports"
+db_path = "data/zuot.db"

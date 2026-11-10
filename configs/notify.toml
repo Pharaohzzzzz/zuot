@@ -1,0 +1,4 @@
+[notify]
+transport = "webhook"
+webhook_env = "ZUOT_FEISHU_WEBHOOK"
+dry_run = true
